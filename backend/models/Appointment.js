@@ -38,10 +38,14 @@ const appointmentSchema = new mongoose.Schema({
     type: String,
     required: true
   },
+  city: {
+    type: String,
+    default: ''
+  },
   status: {
     type: String,
-    enum: ['upcoming', 'completed', 'cancelled'],
-    default: 'upcoming'
+    enum: ['upcoming', 'waiting', 'completed', 'cancelled'],
+    default: 'waiting'
   },
   createdAt: {
     type: Date,

@@ -37,7 +37,7 @@ const server = http.createServer(app);
 const io = socketIO(server, {
   cors: {
     origin: "http://localhost:5173",
-    methods: ["GET", "POST"],
+    methods: ["GET", "POST", "PUT"],
     credentials: true
   }
 });
@@ -59,7 +59,7 @@ const connectDB = async () => {
   try {
     await mongoose.connect(process.env.MONGODB_URI);
     console.log('✅ MongoDB connected successfully');
-    
+
     // Create indexes after successful connection
     const createIndexes = require('./config/dbIndexes');
     await createIndexes();
@@ -71,7 +71,7 @@ const connectDB = async () => {
     } catch (e) {
       console.log('Admin seeding skipped:', e.message);
     }
-    
+
   } catch (error) {
     console.error('❌ MongoDB connection error:', error.message);
     console.log('\n💡 Troubleshooting tips:');
@@ -112,27 +112,36 @@ try {
 }
 
 // ============ SOCKET.IO HANDLER ============
-const socketHandler = (io) => {
-  io.on('connection', (socket) => {
-    console.log('✅ New client connected:', socket.id);
-    
-    socket.on('join-queue', (data) => {
-      console.log('User joined queue:', data);
-      socket.join(`queue-${data.serviceType}`);
-    });
-    
-    socket.on('admin-action', (data) => {
-      console.log('Admin action:', data);
-      io.to(`queue-${data.serviceType}`).emit('queue-update', data);
-    });
-    
-    socket.on('disconnect', () => {
-      console.log('❌ Client disconnected:', socket.id);
-    });
-  });
-};
+io.on('connection', (socket) => {
+  console.log('✅ New client connected:', socket.id);
 
-socketHandler(io);
+  // Join a service-type room for queue-wide broadcast updates
+  socket.on('join-queue', (data) => {
+    if (data?.serviceType) {
+      socket.join(`queue-${data.serviceType}`);
+      console.log(`Socket ${socket.id} joined queue-${data.serviceType}`);
+    }
+  });
+
+  // Join a per-token room so the individual customer receives their turn-alert
+  socket.on('join-token', (data) => {
+    if (data?.tokenNumber) {
+      socket.join(`token-${data.tokenNumber}`);
+      console.log(`Socket ${socket.id} joined token-${data.tokenNumber}`);
+    }
+  });
+
+  // Admin secondary channel (main state changes go through REST + emitQueueUpdate)
+  socket.on('admin-action', (data) => {
+    if (data?.serviceType) {
+      io.to(`queue-${data.serviceType}`).emit('queue-update', data);
+    }
+  });
+
+  socket.on('disconnect', () => {
+    console.log('❌ Client disconnected:', socket.id);
+  });
+});
 
 // ============ ROOT ROUTE ============
 app.get('/', (req, res) => {

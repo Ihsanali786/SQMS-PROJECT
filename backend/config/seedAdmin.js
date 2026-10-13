@@ -5,13 +5,23 @@ const seedAdminUser = async () => {
   const adminPassword = process.env.ADMIN_PASSWORD || 'admin1234';
   const adminName = process.env.ADMIN_NAME || 'Admin';
 
-  const existing = await User.findOne({ email: adminEmail });
+  const existing = await User.findOne({ email: adminEmail }).select('+password');
   if (existing) {
+    let changed = false;
+
     if (existing.role !== 'admin') {
       existing.role = 'admin';
-      await existing.save();
-      console.log(`✅ Updated role to admin for ${adminEmail}`);
+      changed = true;
+      console.log(`Updated role to admin for ${adminEmail}`);
     }
+
+    if (!(await existing.matchPassword(adminPassword))) {
+      existing.password = adminPassword;
+      changed = true;
+      console.log(`Updated admin password from configured ADMIN_PASSWORD for ${adminEmail}`);
+    }
+
+    if (changed) await existing.save();
     return;
   }
 
@@ -22,8 +32,7 @@ const seedAdminUser = async () => {
     role: 'admin',
   });
 
-  console.log(`✅ Seeded admin user: ${adminEmail} (password: ${adminPassword})`);
+  console.log(`Seeded admin user: ${adminEmail} (password: ${adminPassword})`);
 };
 
 module.exports = seedAdminUser;
-

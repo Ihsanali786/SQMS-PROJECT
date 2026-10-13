@@ -25,6 +25,12 @@ const userSchema = new mongoose.Schema({
     enum: ['user', 'admin'],
     default: 'user'
   },
+  /** When set, admin/staff users may only manage these service types */
+  managedServiceTypes: {
+    type: [String],
+    enum: ['bank', 'nadra', 'university', 'hospital'],
+    default: undefined
+  },
   phone: {
     type: String,
     default: ''

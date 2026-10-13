@@ -1,6 +1,10 @@
 // backend/config/swagger.js
+const path = require('path');
 const swaggerJsdoc = require('swagger-jsdoc');
 const swaggerUi = require('swagger-ui-express');
+
+const port = process.env.PORT || 5000;
+const apiServerUrl = process.env.API_BASE_URL || `http://localhost:${port}/api`;
 
 const options = {
   definition: {
@@ -16,7 +20,7 @@ const options = {
     },
     servers: [
       {
-        url: 'http://localhost:5000/api',
+        url: apiServerUrl,
         description: 'Development server'
       }
     ],
@@ -63,7 +67,7 @@ const options = {
     },
     security: [{ bearerAuth: [] }]
   },
-  apis: ['./routes/*.js']
+  apis: [path.join(__dirname, '../docs/openapi.yaml')]
 };
 
 const specs = swaggerJsdoc(options);

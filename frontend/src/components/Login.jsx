@@ -41,8 +41,9 @@ const Login = () => {
         
         toast.success(`Welcome back ${data.name}!`);
         
+        window.dispatchEvent(new Event('sqms-auth-change'));
         if (data.role === 'admin') {
-          navigate('/admin/bank');
+          navigate('/admin/dashboard');
         } else {
           navigate('/');
         }
@@ -131,8 +132,8 @@ const Login = () => {
 
         <div className="mt-6 p-4 bg-gray-100 dark:bg-gray-700 rounded-lg">
           <p className="text-sm font-semibold mb-2 dark:text-white">📌 Demo Accounts:</p>
-          <p className="text-xs text-gray-600 dark:text-gray-300">👑 Admin: admin@example.com (any password)</p>
-          <p className="text-xs text-gray-600 dark:text-gray-300">👤 User: user@example.com (any password)</p>
+          <p className="text-xs text-gray-600 dark:text-gray-300">👑 Admin: admin@example.com / admin1234 (seed default)</p>
+          <p className="text-xs text-gray-600 dark:text-gray-300">👤 Or register a new customer account below</p>
           <p className="text-xs text-blue-600 dark:text-blue-400 mt-1">🔐 All data is stored securely in MongoDB</p>
         </div>
       </div>

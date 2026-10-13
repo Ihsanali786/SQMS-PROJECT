@@ -1,230 +1,231 @@
 // frontend/src/components/AnalyticsDashboard.jsx
-import { useState, useEffect } from 'react';
-import { LineChart, Line, BarChart, Bar, PieChart, Pie, Cell, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
-import DarkModeToggle from './DarkModeToggle';
+import { useEffect, useMemo, useState } from 'react';
+import {
+  Bar,
+  BarChart,
+  CartesianGrid,
+  Cell,
+  Pie,
+  PieChart,
+  ResponsiveContainer,
+  Tooltip,
+  XAxis,
+  YAxis
+} from 'recharts';
+import { getQueueAnalytics } from '../services/api';
+
+const SERVICES = [
+  { key: 'bank', label: 'Bank', color: '#16a34a' },
+  { key: 'nadra', label: 'NADRA', color: '#7c3aed' },
+  { key: 'university', label: 'University', color: '#ea580c' },
+  { key: 'hospital', label: 'Hospital', color: '#dc2626' }
+];
+
+const emptyMetrics = {
+  totalToday: 0,
+  waiting: 0,
+  serving: 0,
+  completed: 0,
+  skipped: 0,
+  averageWaitTime: 0,
+  openCounters: 0,
+  completionRate: 0
+};
 
 const AnalyticsDashboard = () => {
-  const [queueData, setQueueData] = useState([]);
-  const [serviceData, setServiceData] = useState([]);
-  const [peakHours, setPeakHours] = useState([]);
+  const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
 
-  // Sample data - In production, fetch from your backend API
+  const loadAnalytics = async () => {
+    try {
+      setLoading(true);
+      setError('');
+      const responses = await Promise.all(
+        SERVICES.map((service) =>
+          getQueueAnalytics(service.key).then((response) => ({
+            ...service,
+            ...(response.data?.data || emptyMetrics)
+          }))
+        )
+      );
+      setRows(responses);
+    } catch (err) {
+      const message = err.response?.status === 401
+        ? 'Analytics are available to admin users only.'
+        : err.response?.data?.message || 'Failed to load analytics.';
+      setError(message);
+      setRows([]);
+    } finally {
+      setLoading(false);
+    }
+  };
+
   useEffect(() => {
-    // Hourly customer data
-    const hourlyData = [
-      { hour: '9 AM', customers: 45, waitTime: 5, completed: 40 },
-      { hour: '10 AM', customers: 78, waitTime: 8, completed: 70 },
-      { hour: '11 AM', customers: 120, waitTime: 15, completed: 110 },
-      { hour: '12 PM', customers: 95, waitTime: 12, completed: 88 },
-      { hour: '1 PM', customers: 62, waitTime: 7, completed: 58 },
-      { hour: '2 PM', customers: 85, waitTime: 10, completed: 80 },
-      { hour: '3 PM', customers: 110, waitTime: 14, completed: 100 },
-      { hour: '4 PM', customers: 70, waitTime: 6, completed: 65 },
-    ];
-    setQueueData(hourlyData);
-
-    // Service distribution
-    const services = [
-      { name: 'Bank', value: 320, color: '#22c55e' },
-      { name: 'NADRA', value: 210, color: '#a855f7' },
-      { name: 'University', value: 180, color: '#f97316' },
-      { name: 'Hospital', value: 150, color: '#ef4444' },
-    ];
-    setServiceData(services);
-
-    // Peak hours analysis
-    const peaks = [
-      { hour: '11 AM - 12 PM', customers: 120, utilization: '90%' },
-      { hour: '3 PM - 4 PM', customers: 110, utilization: '85%' },
-      { hour: '10 AM - 11 AM', customers: 78, utilization: '65%' },
-    ];
-    setPeakHours(peaks);
-    setLoading(false);
+    loadAnalytics();
   }, []);
 
-  const COLORS = ['#22c55e', '#a855f7', '#f97316', '#ef4444', '#3b82f6', '#eab308'];
+  const totals = useMemo(() => rows.reduce((sum, row) => ({
+    totalToday: sum.totalToday + (row.totalToday || 0),
+    waiting: sum.waiting + (row.waiting || 0),
+    serving: sum.serving + (row.serving || 0),
+    completed: sum.completed + (row.completed || 0),
+    skipped: sum.skipped + (row.skipped || 0),
+    openCounters: sum.openCounters + (row.openCounters || 0)
+  }), emptyMetrics), [rows]);
 
-  if (loading) {
-    return (
-      <div className="min-h-screen bg-gray-100 dark:bg-gray-900 flex items-center justify-center">
-        <div className="text-center">
-          <div className="text-2xl mb-2">📊</div>
-          <p className="text-gray-600 dark:text-gray-400">Loading analytics...</p>
-        </div>
-      </div>
-    );
-  }
+  const weightedAverageWait = useMemo(() => {
+    const weighted = rows.reduce((sum, row) => sum + ((row.averageWaitTime || 0) * Math.max(row.completed || row.totalToday || 0, 1)), 0);
+    const weight = rows.reduce((sum, row) => sum + Math.max(row.completed || row.totalToday || 0, 1), 0);
+    return weight > 0 ? Math.round(weighted / weight) : 0;
+  }, [rows]);
+
+  const distribution = rows
+    .filter((row) => (row.totalToday || row.waiting || row.completed || row.skipped || row.serving) > 0)
+    .map((row) => ({
+      name: row.label,
+      value: row.totalToday || row.waiting + row.serving + row.completed + row.skipped,
+      color: row.color
+    }));
 
   return (
-    <div className="min-h-screen bg-gray-100 dark:bg-gray-900 transition-colors duration-200">
-      <div className="max-w-7xl mx-auto p-4 md:p-6">
-        {/* Header */}
-        <div className="bg-gradient-to-r from-blue-600 to-indigo-600 rounded-lg shadow-md p-6 mb-6 text-white">
-          <div className="flex justify-between items-center">
+    <div className="bg-gray-50 dark:bg-gray-900/50 transition-colors duration-200">
+      <div className="max-w-7xl mx-auto p-4 md:p-6 md:py-8">
+        <div className="bg-white dark:bg-gray-800 rounded-2xl shadow-sm border border-gray-100 dark:border-gray-700 p-6 mb-6">
+          <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
             <div>
-              <h1 className="text-2xl md:text-3xl font-bold">📊 Analytics Dashboard</h1>
-              <p className="text-blue-100 mt-1">Real-time queue statistics and insights</p>
+              <h1 className="text-2xl md:text-3xl font-bold dark:text-white">Analytics Dashboard</h1>
+              <p className="text-gray-600 dark:text-gray-400 mt-1">Live metrics from MongoDB queue records</p>
             </div>
-            <DarkModeToggle />
+            <button
+              type="button"
+              onClick={loadAnalytics}
+              disabled={loading}
+              className="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition disabled:opacity-60"
+            >
+              {loading ? 'Refreshing…' : 'Refresh'}
+            </button>
           </div>
         </div>
 
-        {/* Summary Cards */}
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
-          <div className="bg-white dark:bg-gray-800 rounded-lg shadow-md p-4">
-            <p className="text-sm text-gray-600 dark:text-gray-400">Total Customers Today</p>
-            <p className="text-2xl font-bold text-blue-600">665</p>
-            <p className="text-xs text-green-600">↑ 12% from yesterday</p>
-          </div>
-          <div className="bg-white dark:bg-gray-800 rounded-lg shadow-md p-4">
-            <p className="text-sm text-gray-600 dark:text-gray-400">Average Wait Time</p>
-            <p className="text-2xl font-bold text-green-600">9.6 min</p>
-            <p className="text-xs text-green-600">↓ 2 min improvement</p>
-          </div>
-          <div className="bg-white dark:bg-gray-800 rounded-lg shadow-md p-4">
-            <p className="text-sm text-gray-600 dark:text-gray-400">Peak Hour</p>
-            <p className="text-2xl font-bold text-orange-600">11 AM - 12 PM</p>
-            <p className="text-xs text-gray-500">120 customers</p>
-          </div>
-          <div className="bg-white dark:bg-gray-800 rounded-lg shadow-md p-4">
-            <p className="text-sm text-gray-600 dark:text-gray-400">Service Rate</p>
-            <p className="text-2xl font-bold text-purple-600">94%</p>
-            <p className="text-xs text-green-600">↑ 5% efficiency</p>
-          </div>
-        </div>
+        {loading && rows.length === 0 && !error && (
+          <p className="text-center text-gray-500 dark:text-gray-400 py-12">Loading analytics…</p>
+        )}
 
-        {/* Charts Grid */}
-        <div className="grid lg:grid-cols-2 gap-6 mb-6">
-          {/* Line Chart - Customer Traffic */}
-          <div className="bg-white dark:bg-gray-800 rounded-lg shadow-md p-4">
-            <h2 className="text-lg font-bold mb-4 dark:text-white">📈 Customer Traffic (Hourly)</h2>
-            <ResponsiveContainer width="100%" height={300}>
-              <LineChart data={queueData}>
-                <CartesianGrid strokeDasharray="3 3" />
-                <XAxis dataKey="hour" />
-                <YAxis />
-                <Tooltip />
-                <Legend />
-                <Line type="monotone" dataKey="customers" stroke="#3b82f6" name="Customers" strokeWidth={2} />
-                <Line type="monotone" dataKey="completed" stroke="#22c55e" name="Completed" strokeWidth={2} />
-              </LineChart>
-            </ResponsiveContainer>
+        {error && (
+          <div className="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg p-4 mb-6 text-red-700 dark:text-red-300">
+            {error}
           </div>
+        )}
 
-          {/* Bar Chart - Wait Times */}
-          <div className="bg-white dark:bg-gray-800 rounded-lg shadow-md p-4">
-            <h2 className="text-lg font-bold mb-4 dark:text-white">⏱️ Average Wait Time (Minutes)</h2>
-            <ResponsiveContainer width="100%" height={300}>
-              <BarChart data={queueData}>
-                <CartesianGrid strokeDasharray="3 3" />
-                <XAxis dataKey="hour" />
-                <YAxis />
-                <Tooltip />
-                <Legend />
-                <Bar dataKey="waitTime" fill="#ef4444" name="Wait Time (min)" radius={[8, 8, 0, 0]} />
-              </BarChart>
-            </ResponsiveContainer>
+        {!error && rows.length === 0 && (
+          <div className="bg-white dark:bg-gray-800 rounded-lg shadow-md p-8 text-center text-gray-600 dark:text-gray-400">
+            No analytics data is available yet.
           </div>
+        )}
 
-          {/* Pie Chart - Service Distribution */}
-          <div className="bg-white dark:bg-gray-800 rounded-lg shadow-md p-4">
-            <h2 className="text-lg font-bold mb-4 dark:text-white">🥧 Service Distribution</h2>
-            <ResponsiveContainer width="100%" height={300}>
-              <PieChart>
-                <Pie
-                  data={serviceData}
-                  cx="50%"
-                  cy="50%"
-                  labelLine={false}
-                  label={({ name, percent }) => `${name} ${(percent * 100).toFixed(0)}%`}
-                  outerRadius={80}
-                  fill="#8884d8"
-                  dataKey="value"
-                >
-                  {serviceData.map((entry, index) => (
-                    <Cell key={`cell-${index}`} fill={entry.color} />
-                  ))}
-                </Pie>
-                <Tooltip />
-              </PieChart>
-            </ResponsiveContainer>
-          </div>
+        {!error && rows.length > 0 && (
+          <>
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+              <div className="bg-white dark:bg-gray-800 rounded-lg shadow-md p-4">
+                <p className="text-sm text-gray-600 dark:text-gray-400">Customers Today</p>
+                <p className="text-2xl font-bold text-blue-600">{totals.totalToday}</p>
+              </div>
+              <div className="bg-white dark:bg-gray-800 rounded-lg shadow-md p-4">
+                <p className="text-sm text-gray-600 dark:text-gray-400">Waiting Now</p>
+                <p className="text-2xl font-bold text-orange-600">{totals.waiting}</p>
+              </div>
+              <div className="bg-white dark:bg-gray-800 rounded-lg shadow-md p-4">
+                <p className="text-sm text-gray-600 dark:text-gray-400">Avg Wait</p>
+                <p className="text-2xl font-bold text-green-600">{weightedAverageWait} min</p>
+              </div>
+              <div className="bg-white dark:bg-gray-800 rounded-lg shadow-md p-4">
+                <p className="text-sm text-gray-600 dark:text-gray-400">Open Counters</p>
+                <p className="text-2xl font-bold text-purple-600">{totals.openCounters}</p>
+              </div>
+            </div>
 
-          {/* Peak Hours Table */}
-          <div className="bg-white dark:bg-gray-800 rounded-lg shadow-md p-4">
-            <h2 className="text-lg font-bold mb-4 dark:text-white">🔥 Peak Hours Analysis</h2>
-            <div className="overflow-x-auto">
-              <table className="w-full">
-                <thead className="bg-gray-50 dark:bg-gray-700">
-                  <tr>
-                    <th className="p-3 text-left">Time Slot</th>
-                    <th className="p-3 text-left">Customers</th>
-                    <th className="p-3 text-left">Utilization</th>
-                    <th className="p-3 text-left">Recommendation</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {peakHours.map((peak, index) => (
-                    <tr key={index} className="border-t dark:border-gray-700">
-                      <td className="p-3 font-semibold">{peak.hour}</td>
-                      <td className="p-3">{peak.customers}</td>
-                      <td className="p-3">
-                        <span className="bg-orange-100 text-orange-700 px-2 py-1 rounded text-xs">
-                          {peak.utilization}
-                        </span>
-                      </td>
-                      <td className="p-3 text-sm">Add more staff</td>
+            <div className="grid lg:grid-cols-2 gap-6 mb-6">
+              <div className="bg-white dark:bg-gray-800 rounded-lg shadow-md p-4">
+                <h2 className="text-lg font-bold mb-4 dark:text-white">Queue Load by Service</h2>
+                <ResponsiveContainer width="100%" height={300}>
+                  <BarChart data={rows}>
+                    <CartesianGrid strokeDasharray="3 3" />
+                    <XAxis dataKey="label" />
+                    <YAxis allowDecimals={false} />
+                    <Tooltip />
+                    <Bar dataKey="waiting" name="Waiting" fill="#f97316" />
+                    <Bar dataKey="serving" name="Serving" fill="#3b82f6" />
+                    <Bar dataKey="completed" name="Completed Today" fill="#16a34a" />
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+
+              <div className="bg-white dark:bg-gray-800 rounded-lg shadow-md p-4">
+                <h2 className="text-lg font-bold mb-4 dark:text-white">Today's Service Distribution</h2>
+                {distribution.length > 0 ? (
+                  <ResponsiveContainer width="100%" height={300}>
+                    <PieChart>
+                      <Pie
+                        data={distribution}
+                        cx="50%"
+                        cy="50%"
+                        label={({ name, value }) => `${name}: ${value}`}
+                        outerRadius={90}
+                        dataKey="value"
+                      >
+                        {distribution.map((entry) => (
+                          <Cell key={entry.name} fill={entry.color} />
+                        ))}
+                      </Pie>
+                      <Tooltip />
+                    </PieChart>
+                  </ResponsiveContainer>
+                ) : (
+                  <div className="h-[300px] flex items-center justify-center text-gray-500 dark:text-gray-400">
+                    No tokens created today.
+                  </div>
+                )}
+              </div>
+            </div>
+
+            <div className="bg-white dark:bg-gray-800 rounded-lg shadow-md overflow-hidden">
+              <div className="p-4 border-b dark:border-gray-700">
+                <h2 className="text-lg font-bold dark:text-white">Service Details</h2>
+              </div>
+              <div className="overflow-x-auto">
+                <table className="w-full">
+                  <thead className="bg-gray-50 dark:bg-gray-700">
+                    <tr>
+                      <th className="p-3 text-left dark:text-gray-300">Service</th>
+                      <th className="p-3 text-left dark:text-gray-300">Today</th>
+                      <th className="p-3 text-left dark:text-gray-300">Waiting</th>
+                      <th className="p-3 text-left dark:text-gray-300">Serving</th>
+                      <th className="p-3 text-left dark:text-gray-300">Completed</th>
+                      <th className="p-3 text-left dark:text-gray-300">Skipped</th>
+                      <th className="p-3 text-left dark:text-gray-300">Avg Wait</th>
+                      <th className="p-3 text-left dark:text-gray-300">Counters</th>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </div>
-        </div>
-
-        {/* Recommendations */}
-        <div className="bg-white dark:bg-gray-800 rounded-lg shadow-md p-6">
-          <h2 className="text-lg font-bold mb-4 dark:text-white">💡 AI Recommendations</h2>
-          <div className="grid md:grid-cols-2 gap-4">
-            <div className="bg-blue-50 dark:bg-blue-900/30 p-4 rounded-lg">
-              <div className="flex items-center gap-2 mb-2">
-                <span className="text-xl">👥</span>
-                <span className="font-semibold">Staff Optimization</span>
+                  </thead>
+                  <tbody>
+                    {rows.map((row) => (
+                      <tr key={row.key} className="border-t dark:border-gray-700">
+                        <td className="p-3 font-semibold dark:text-white">{row.label}</td>
+                        <td className="p-3 dark:text-gray-300">{row.totalToday}</td>
+                        <td className="p-3 dark:text-gray-300">{row.waiting}</td>
+                        <td className="p-3 dark:text-gray-300">{row.serving}</td>
+                        <td className="p-3 dark:text-gray-300">{row.completed}</td>
+                        <td className="p-3 dark:text-gray-300">{row.skipped}</td>
+                        <td className="p-3 dark:text-gray-300">{row.averageWaitTime} min</td>
+                        <td className="p-3 dark:text-gray-300">{row.openCounters}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
               </div>
-              <p className="text-sm text-gray-600 dark:text-gray-400">
-                Peak hours 11 AM - 12 PM need 2 additional staff members to reduce wait time by 40%.
-              </p>
             </div>
-            <div className="bg-green-50 dark:bg-green-900/30 p-4 rounded-lg">
-              <div className="flex items-center gap-2 mb-2">
-                <span className="text-xl">⏰</span>
-                <span className="font-semibold">Best Time to Visit</span>
-              </div>
-              <p className="text-sm text-gray-600 dark:text-gray-400">
-                Recommended visiting hours: 9 AM - 10 AM or 1 PM - 2 PM (30% less waiting time).
-              </p>
-            </div>
-            <div className="bg-purple-50 dark:bg-purple-900/30 p-4 rounded-lg">
-              <div className="flex items-center gap-2 mb-2">
-                <span className="text-xl">🏦</span>
-                <span className="font-semibold">Branch Performance</span>
-              </div>
-              <p className="text-sm text-gray-600 dark:text-gray-400">
-                HBL Main Branch has highest traffic. Consider redirecting customers to Clifton Branch.
-              </p>
-            </div>
-            <div className="bg-yellow-50 dark:bg-yellow-900/30 p-4 rounded-lg">
-              <div className="flex items-center gap-2 mb-2">
-                <span className="text-xl">📊</span>
-                <span className="font-semibold">Service Efficiency</span>
-              </div>
-              <p className="text-sm text-gray-600 dark:text-gray-400">
-                Cash Deposit service takes 40% longer than average. Review process for improvement.
-              </p>
-            </div>
-          </div>
-        </div>
+          </>
+        )}
       </div>
     </div>
   );

@@ -25,7 +25,13 @@ const queueSchema = new mongoose.Schema({
   },
   averageWaitTime: {
     type: Number,
-    default: 0
+    default: 0   // minutes, rolling average of actual service durations
+  },
+  // Number of counters currently open/active for this service
+  openCounters: {
+    type: Number,
+    default: 1,
+    min: 0
   },
   lastUpdated: {
     type: Date,

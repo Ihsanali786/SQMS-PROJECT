@@ -1,89 +1,242 @@
+
 // src/components/AdminDashboard.jsx
-import { useState } from 'react';
+
+import { useState, useEffect, useCallback } from 'react';
 import toast from 'react-hot-toast';
+import api from '../services/api';
 
 const AdminDashboard = ({ type = 'bank' }) => {
-  const [tokens] = useState([
-    { id: 1, token: 'B-38', name: 'Hassan', service: 'Cash Deposit', status: 'In Service' },
-    { id: 2, token: 'N-210', name: 'Ali', service: 'CNIC Renewal', status: 'Waiting' },
-    { id: 3, token: 'U-140', name: 'Sara', service: 'Student Registration', status: 'Waiting' },
-  ]);
+  const [appointments, setAppointments] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
 
-  const stats = {
-    bank: { today: 90, serving: 'B-38', next: 'Sana', waiting: 'N-212' },
-    nadra: { today: 210, serving: 'N-210', next: 'N-211', waiting: 'N-212' },
-    university: { today: 55, serving: 'U-140', next: 'U-141', waiting: 'N-142' },
-  };
+  const fetchAppointments = useCallback(async () => {
+    try {
+      setLoading(true);
+      setError('');
 
-  const currentStat = stats[type];
+      const response = await api.get('/appointments/admin/all');
 
-  const handleMarkDone = (tokenId) => {
-    toast.success(`Token ${tokenId} marked as completed!`);
+      const data = response.data?.data;
+
+      if (!Array.isArray(data)) {
+        throw new Error('Invalid appointment data received');
+      }
+
+      setAppointments(data);
+    } catch (err) {
+      console.error('Admin appointments error:', err);
+
+      const message =
+        err.response?.data?.message ||
+        'Failed to load appointments';
+
+      setError(message);
+      toast.error(message);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    fetchAppointments();
+  }, [fetchAppointments]);
+
+  const filteredAppointments = appointments.filter((appointment) => {
+    if (!appointment.serviceType) return true;
+
+    return appointment.serviceType
+      .toLowerCase()
+      .includes(type.toLowerCase());
+  });
+
+  const today = new Date().toDateString();
+
+  const todaysAppointments = filteredAppointments.filter(
+    (appointment) =>
+      appointment.date &&
+      new Date(appointment.date).toDateString() === today
+  );
+
+  const waitingAppointments = filteredAppointments.filter(
+    (appointment) =>
+      appointment.status?.toLowerCase() === 'waiting'
+  );
+
+  const currentServing = filteredAppointments.find(
+    (appointment) =>
+      appointment.status?.toLowerCase() === 'in service'
+  );
+
+  const handleMarkDone = async (appointmentId) => {
+    toast.error(
+      'Completion API is not connected yet. No status was changed.'
+    );
   };
 
   const handleSkip = () => {
-    toast.success('Token skipped!');
+    toast.error(
+      'Skip API is not connected yet. No appointment was changed.'
+    );
+  };
+
+  const handleCallNext = () => {
+    toast.error(
+      'Call Next API is not connected yet. No appointment was changed.'
+    );
   };
 
   return (
     <div className="min-h-screen bg-gray-100 p-6">
       <div className="max-w-6xl mx-auto">
-        <div className="bg-white rounded-lg shadow-md p-4 mb-6">
-          <h1 className="text-2xl font-bold capitalize">{type} Admin Dashboard</h1>
+        <div className="bg-white rounded-lg shadow-md p-4 mb-6 flex flex-wrap items-center justify-between gap-3">
+          <h1 className="text-2xl font-bold capitalize">
+            {type} Admin Dashboard
+          </h1>
+
+          <button
+            onClick={fetchAppointments}
+            disabled={loading}
+            className="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700 disabled:opacity-50"
+          >
+            {loading ? 'Loading...' : 'Refresh'}
+          </button>
         </div>
 
-        {/* Stats Cards */}
         <div className="grid md:grid-cols-3 gap-4 mb-6">
           <div className="bg-white rounded-lg shadow-md p-4">
-            <p className="text-sm text-gray-600">Today's Appointments</p>
-            <p className="text-3xl font-bold text-blue-600">{currentStat.today}</p>
+            <p className="text-sm text-gray-600">
+              Today's Appointments
+            </p>
+            <p className="text-3xl font-bold text-blue-600">
+              {todaysAppointments.length}
+            </p>
           </div>
+
           <div className="bg-white rounded-lg shadow-md p-4">
-            <p className="text-sm text-gray-600">Now Serving</p>
-            <p className="text-3xl font-bold text-green-600">{currentStat.serving}</p>
+            <p className="text-sm text-gray-600">
+              Now Serving
+            </p>
+            <p className="text-3xl font-bold text-green-600">
+              {currentServing?.tokenId || 'None'}
+            </p>
           </div>
+
           <div className="bg-white rounded-lg shadow-md p-4">
-            <p className="text-sm text-gray-600">People Waiting</p>
-            <p className="text-3xl font-bold text-orange-600">{currentStat.waiting}</p>
+            <p className="text-sm text-gray-600">
+              People Waiting
+            </p>
+            <p className="text-3xl font-bold text-orange-600">
+              {waitingAppointments.length}
+            </p>
           </div>
         </div>
 
-        {/* Token List */}
         <div className="bg-white rounded-lg shadow-md p-6">
-          <h2 className="text-xl font-bold mb-4">Current Queue</h2>
-          <div className="space-y-3">
-            {tokens.map((item) => (
-              <div key={item.id} className="flex items-center justify-between border-b pb-3">
-                <div>
-                  <span className="font-mono font-bold text-lg">{item.token}</span>
-                  <p className="text-sm text-gray-600">{item.name} - {item.service}</p>
-                </div>
-                <div className="flex gap-2">
-                  <span className={`px-2 py-1 rounded text-xs ${
-                    item.status === 'In Service' ? 'bg-green-100 text-green-700' : 'bg-yellow-100 text-yellow-700'
-                  }`}>
-                    {item.status}
-                  </span>
-                  <button 
-                    onClick={() => handleMarkDone(item.token)}
-                    className="bg-blue-600 text-white px-3 py-1 rounded text-sm hover:bg-blue-700"
-                  >
-                    Mark As Done
-                  </button>
-                </div>
-              </div>
-            ))}
+          <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
+            <h2 className="text-xl font-bold">
+              Appointment History
+            </h2>
+
+            <span className="text-sm text-gray-600">
+              Total: {filteredAppointments.length}
+            </span>
           </div>
 
-          {/* Action Buttons */}
-          <div className="flex gap-3 mt-6">
-            <button 
-              onClick={() => handleSkip()}
+          {loading ? (
+            <p className="text-gray-600 py-4">
+              Loading appointments...
+            </p>
+          ) : error ? (
+            <div className="py-4">
+              <p className="text-red-600 mb-3">{error}</p>
+              <button
+                onClick={fetchAppointments}
+                className="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700"
+              >
+                Try Again
+              </button>
+            </div>
+          ) : filteredAppointments.length === 0 ? (
+            <p className="text-gray-600 py-4">
+              No appointments found.
+            </p>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-left border-collapse">
+                <thead>
+                  <tr className="border-b bg-gray-50">
+                    <th className="p-3">Token</th>
+                    <th className="p-3">Customer</th>
+                    <th className="p-3">Email</th>
+                    <th className="p-3">Service</th>
+                    <th className="p-3">Branch</th>
+                    <th className="p-3">Date</th>
+                    <th className="p-3">Time</th>
+                    <th className="p-3">Status</th>
+                  </tr>
+                </thead>
+
+                <tbody>
+                  {filteredAppointments.map((appointment) => (
+                    <tr
+                      key={appointment._id}
+                      className="border-b hover:bg-gray-50"
+                    >
+                      <td className="p-3 font-mono font-bold">
+                        {appointment.tokenId || '-'}
+                      </td>
+
+                      <td className="p-3">
+                        {appointment.customerName || '-'}
+                      </td>
+
+                      <td className="p-3">
+                        {appointment.customerEmail || '-'}
+                      </td>
+
+                      <td className="p-3">
+                        {appointment.service || '-'}
+                      </td>
+
+                      <td className="p-3">
+                        {appointment.branch || '-'}
+                      </td>
+
+                      <td className="p-3">
+                        {appointment.date
+                          ? new Date(appointment.date).toLocaleDateString()
+                          : '-'}
+                      </td>
+
+                      <td className="p-3">
+                        {appointment.time || '-'}
+                      </td>
+
+                      <td className="p-3">
+                        <span className="px-2 py-1 rounded text-xs bg-gray-100 text-gray-700">
+                          {appointment.status || 'Unknown'}
+                        </span>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+
+          <div className="flex flex-wrap gap-3 mt-6">
+            <button
+              onClick={handleSkip}
               className="bg-yellow-600 text-white px-4 py-2 rounded hover:bg-yellow-700"
             >
               Skip Token
             </button>
-            <button className="bg-green-600 text-white px-4 py-2 rounded hover:bg-green-700">
+
+            <button
+              onClick={handleCallNext}
+              className="bg-green-600 text-white px-4 py-2 rounded hover:bg-green-700"
+            >
               Call Next
             </button>
           </div>

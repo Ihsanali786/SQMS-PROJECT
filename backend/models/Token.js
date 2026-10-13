@@ -54,6 +54,11 @@ const tokenSchema = new mongoose.Schema({
     type: Number,
     default: 0
   },
+  /** Demo/simulation arrivals — safe to bulk-delete without touching real customers */
+  isSimulated: {
+    type: Boolean,
+    default: false
+  },
   completedAt: {
     type: Date
   },

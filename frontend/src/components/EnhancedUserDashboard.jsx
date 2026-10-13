@@ -1,5 +1,5 @@
 // frontend/src/components/EnhancedUserDashboard.jsx
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { Link } from 'react-router-dom';
 import toast from 'react-hot-toast';
 import * as XLSX from 'xlsx';
@@ -26,9 +26,17 @@ const EnhancedUserDashboard = () => {
   const [rescheduleDate, setRescheduleDate] = useState('');
   const [rescheduleTime, setRescheduleTime] = useState('');
   const [isLoading, setIsLoading] = useState(false);
-  
+  // Simulation controls (admin only)
+  const [simLoading, setSimLoading] = useState(false);
+
   const [user] = useState(() => JSON.parse(localStorage.getItem('user') || 'null'));
   const isAdmin = user?.role === 'admin';
+
+  // Use ref to always access current token/activeTokens inside socket callbacks
+  const tokenRef = useRef(token);
+  const activeTokensRef = useRef(activeTokens);
+  useEffect(() => { tokenRef.current = token; }, [token]);
+  useEffect(() => { activeTokensRef.current = activeTokens; }, [activeTokens]);
 
   const refreshQueueStatus = async (serviceTypeToRefresh, tokenNumber, opts = {}) => {
     if (!serviceTypeToRefresh || !tokenNumber) return;
@@ -41,6 +49,7 @@ const EnhancedUserDashboard = () => {
       const data = response.data.data;
       const waitingList = data.waitingList || [];
       const nowServing = data.currentServing?.tokenNumber || null;
+      const openCounters = data.openCounters || 1;
 
       if (nowServing && nowServing === tokenNumber) {
         const status = {
@@ -49,6 +58,7 @@ const EnhancedUserDashboard = () => {
           peopleAhead: 0,
           estimatedWait: '0 minutes',
           isTurnNear: false,
+          openCounters,
         };
         setTokenStatuses((prev) => ({ ...prev, [tokenNumber]: status }));
         if (updatePrimary) setQueueStatus(status);
@@ -57,7 +67,11 @@ const EnhancedUserDashboard = () => {
 
       const index = waitingList.findIndex((t) => t.tokenNumber === tokenNumber);
       const peopleAhead = index === -1 ? 0 : index;
-      const estimatedWait = `${peopleAhead * 5} minutes`;
+      // ETA from backend position field (already recalculated)
+      const myToken = waitingList.find(t => t.tokenNumber === tokenNumber);
+      const estimatedWait = myToken
+        ? `Approximately ${myToken.estimatedWaitTime} minutes`
+        : `${peopleAhead * 5} minutes`;
       const isTurnNear = peopleAhead > 0 && peopleAhead <= 2;
 
       const status = {
@@ -66,6 +80,7 @@ const EnhancedUserDashboard = () => {
         peopleAhead,
         estimatedWait,
         isTurnNear,
+        openCounters,
       };
       setTokenStatuses((prev) => ({ ...prev, [tokenNumber]: status }));
       if (updatePrimary) setQueueStatus(status);
@@ -82,32 +97,31 @@ const EnhancedUserDashboard = () => {
       if (!response.data?.success) return;
 
       const tokens = response.data.data || [];
-      const activeTokens = tokens.filter((t) => t.status === 'waiting' || t.status === 'serving');
-      setActiveTokens(activeTokens);
+      const active = tokens.filter((t) => t.status === 'waiting' || t.status === 'serving');
+      setActiveTokens(active);
 
-      // Prefer currently serving token, otherwise the one with the smallest position (closest to being served).
-      const active =
-        activeTokens.find((t) => t.status === 'serving') ||
-        activeTokens.sort((a, b) => (a.position || 0) - (b.position || 0))[0];
-      if (!active) return;
+      const primary =
+        active.find((t) => t.status === 'serving') ||
+        active.sort((a, b) => (a.position || 0) - (b.position || 0))[0];
+      if (!primary) return;
 
       setToken({
-        number: active.tokenNumber,
-        service: active.service,
-        city: active.city || '',
-        branch: active.branch,
-        date: active.date ? new Date(active.date).toISOString().slice(0, 10) : '',
-        time: active.time,
-        peopleAhead: Math.max((active.position || 1) - 1, 0),
-        estimatedWait: `${active.estimatedWaitTime || 0} minutes`,
-        status: active.status,
-        timestamp: active.createdAt,
-        serviceType: active.serviceType,
+        number: primary.tokenNumber,
+        service: primary.service,
+        city: primary.city || '',
+        branch: primary.branch,
+        date: primary.date ? new Date(primary.date).toISOString().slice(0, 10) : '',
+        time: primary.time,
+        peopleAhead: Math.max((primary.position || 1) - 1, 0),
+        estimatedWait: `Approximately ${primary.estimatedWaitTime || 0} minutes`,
+        status: primary.status,
+        timestamp: primary.createdAt,
+        serviceType: primary.serviceType,
       });
 
       await Promise.all(
-        activeTokens.map((t) =>
-          refreshQueueStatus(t.serviceType, t.tokenNumber, { updatePrimary: t.tokenNumber === active.tokenNumber })
+        active.map((t) =>
+          refreshQueueStatus(t.serviceType, t.tokenNumber, { updatePrimary: t.tokenNumber === primary.tokenNumber })
         )
       );
     } catch {
@@ -134,17 +148,17 @@ const EnhancedUserDashboard = () => {
     if (!selectedDate) return false;
     const today = new Date().toISOString().split('T')[0];
     if (selectedDate !== today) return false;
-    
+
     const currentTime = getCurrentTime();
     const [currentHour, currentMinute, currentPeriod] = currentTime.match(/(\d+):(\d+)\s(AM|PM)/).slice(1);
     const [slotHour, slotMinute, slotPeriod] = timeSlot.match(/(\d+):(\d+)\s(AM|PM)/).slice(1);
-    
+
     let currentTotal = parseInt(currentHour) + (currentPeriod === 'PM' ? 12 : 0);
     let slotTotal = parseInt(slotHour) + (slotPeriod === 'PM' ? 12 : 0);
-    
+
     if (currentTotal === 12) currentTotal = 0;
     if (slotTotal === 12) slotTotal = 0;
-    
+
     return slotTotal < currentTotal || (slotTotal === currentTotal && parseInt(slotMinute) < parseInt(currentMinute));
   };
 
@@ -196,7 +210,7 @@ const EnhancedUserDashboard = () => {
         Multan: ['Nishtar Hospital', 'Multan Institute of Cardiology']
       }
     };
-    
+
     if (service && branches[service] && branches[service][city]) {
       return branches[service][city];
     }
@@ -205,76 +219,81 @@ const EnhancedUserDashboard = () => {
 
   // WebSocket Connection for real-time updates
   useEffect(() => {
-    if (user && token) {
-      socketService.connect(user.id, user.role);
-      
-      socketService.onQueueUpdate((data) => {
-        console.log('Queue update received:', data);
+    if (!user) return;
 
-        const serviceTypeFromEvent = data?.serviceType || data?.data?.serviceType;
-        if (!serviceTypeFromEvent) return;
+    socketService.connect(user.id, user.role);
 
-        const list = activeTokens.length
-          ? activeTokens
-          : token?.serviceType
-            ? [{ tokenNumber: token.number, serviceType: token.serviceType }]
-            : [];
+    socketService.onQueueUpdate((data) => {
+      const serviceTypeFromEvent = data?.serviceType || data?.data?.serviceType;
+      if (!serviceTypeFromEvent) return;
 
-        list
-          .filter((t) => t.serviceType === serviceTypeFromEvent)
-          .forEach((t) =>
-            refreshQueueStatus(t.serviceType, t.tokenNumber, { updatePrimary: t.tokenNumber === token?.number })
-          );
-        return;
-        setQueueStatus(data);
-        
-        if (token && data.peopleAhead !== undefined) {
-          setToken(prev => ({ ...prev, peopleAhead: data.peopleAhead, estimatedWait: data.estimatedWait }));
-        }
-        
-        if (data.isTurnNear) {
-          toast.success(`🔔 Your turn is almost here! Only ${data.peopleAhead} people ahead!`, {
-            duration: 8000,
-            icon: '🔔'
-          });
-        }
-      });
-      
-      socketService.onTurnAlert((data) => {
-        toast((t) => (
-          <div className="flex flex-col gap-2">
-            <strong className="text-lg">🔔 Your turn is next!</strong>
-            <p>Please proceed to Counter {data.counter || 1}</p>
-            <button 
-              onClick={() => toast.dismiss(t.id)} 
-              className="bg-blue-600 text-white px-4 py-1 rounded hover:bg-blue-700"
-            >
-              OK
-            </button>
-          </div>
-        ), { duration: 15000 });
-      });
-      
-      setIsConnected(true);
-      
-      const serviceType = getServiceType();
-      if (serviceType) {
-        socketService.joinQueue(serviceType, user.id);
-      }
+      const currentToken = tokenRef.current;
+      const currentActiveTokens = activeTokensRef.current;
 
-      if (token?.serviceType) {
-        socketService.joinQueue(token.serviceType, user.id);
-      }
+      const list = currentActiveTokens.length
+        ? currentActiveTokens
+        : currentToken?.serviceType
+          ? [{ tokenNumber: currentToken.number, serviceType: currentToken.serviceType }]
+          : [];
 
-      const uniqueServiceTypes = [...new Set(activeTokens.map((t) => t.serviceType).filter(Boolean))];
-      uniqueServiceTypes.forEach((st) => socketService.joinQueue(st, user.id));
-       
-      return () => {
-        socketService.removeListener('queue-update');
-        socketService.removeListener('turn-alert');
-      };
+      list
+        .filter((t) => t.serviceType === serviceTypeFromEvent)
+        .forEach((t) =>
+          refreshQueueStatus(t.serviceType, t.tokenNumber, {
+            updatePrimary: t.tokenNumber === currentToken?.number
+          })
+        );
+    });
+
+    // ✅ Fixed: turn-alert handler is now reachable (was behind an early return before)
+    socketService.onTurnAlert((data) => {
+      toast((t) => (
+        <div className="flex flex-col gap-2">
+          <strong className="text-lg">🔔 Your turn is almost here!</strong>
+          <p>Token <strong>{data.tokenNumber}</strong> — Position #{data.position}</p>
+          <p className="text-sm text-gray-200">{data.message}</p>
+          <button
+            onClick={() => toast.dismiss(t.id)}
+            className="bg-blue-600 text-white px-4 py-1 rounded hover:bg-blue-700"
+          >
+            OK
+          </button>
+        </div>
+      ), { duration: 15000, icon: '🔔' });
+    });
+
+    setIsConnected(true);
+
+    // Join queue rooms for any active service types
+    const currentToken = tokenRef.current;
+    const currentActiveTokens = activeTokensRef.current;
+
+    if (currentToken?.serviceType) {
+      socketService.joinQueue(currentToken.serviceType, user.id);
+      socketService.joinTokenRoom(currentToken.number);
     }
-  }, [token, user, selectedService, activeTokens]);
+    const uniqueServiceTypes = [...new Set(currentActiveTokens.map((t) => t.serviceType).filter(Boolean))];
+    uniqueServiceTypes.forEach((st) => socketService.joinQueue(st, user.id));
+    currentActiveTokens.forEach((t) => socketService.joinTokenRoom(t.tokenNumber));
+
+    return () => {
+      socketService.removeListener('queue-update');
+      socketService.removeListener('turn-alert');
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user?.id]);
+
+  // Join token rooms whenever activeTokens changes
+  useEffect(() => {
+    if (!user) return;
+    activeTokens.forEach((t) => {
+      socketService.joinQueue(t.serviceType, user.id);
+      socketService.joinTokenRoom(t.tokenNumber);
+    });
+    if (token?.number) {
+      socketService.joinTokenRoom(token.number);
+    }
+  }, [activeTokens, token?.number, user?.id]);
 
   // Check for token expiry
   useEffect(() => {
@@ -282,31 +301,26 @@ const EnhancedUserDashboard = () => {
       const expiryCheck = setInterval(() => {
         const tokenAge = Date.now() - new Date(token.timestamp || Date.now()).getTime();
         const hoursSinceGeneration = tokenAge / (1000 * 60 * 60);
-        
-        if (hoursSinceGeneration > 2 && token.status !== 'completed') {
-          toast.error('Your token has expired after 2 hours. Please book a new appointment.', {
-            duration: 10000
-          });
-          setToken(null);
+
+        if (hoursSinceGeneration > 8 && token.status !== 'completed') {
+          toast.error('Your token may have expired. Please refresh.');
           clearInterval(expiryCheck);
         }
-      }, 60000);
-      
+      }, 5 * 60 * 1000); // check every 5 minutes
+
       return () => clearInterval(expiryCheck);
     }
   }, [token]);
 
-  // ✅ CORRECTED handleBookAppointment FUNCTION
   const handleBookAppointment = async () => {
     if (!selectedService || !selectedCity || !selectedBranch || !selectedDate || !selectedTime) {
       toast.error('Please fill all fields');
       return;
     }
-    
+
     setIsLoading(true);
 
     try {
-      // Call backend to generate token
       const response = await api.post('/tokens', {
         service: selectedService,
         serviceType: serviceType,
@@ -318,8 +332,8 @@ const EnhancedUserDashboard = () => {
 
       if (response.data.success) {
         const newToken = response.data.data;
-        
-        setToken({
+
+        const newTokenState = {
           number: newToken.tokenNumber,
           service: newToken.service,
           city: selectedCity,
@@ -327,12 +341,13 @@ const EnhancedUserDashboard = () => {
           date: selectedDate,
           time: selectedTime,
           peopleAhead: newToken.position - 1,
-          estimatedWait: `${newToken.estimatedWaitTime} minutes`,
+          estimatedWait: `Approximately ${newToken.estimatedWaitTime} minutes`,
           status: newToken.status,
           timestamp: newToken.createdAt,
           serviceType: newToken.serviceType
-        });
+        };
 
+        setToken(newTokenState);
         setActiveTokens((prev) => {
           const next = [newToken, ...prev.filter((t) => t.tokenNumber !== newToken.tokenNumber)];
           return next;
@@ -343,28 +358,31 @@ const EnhancedUserDashboard = () => {
           JSON.stringify({ tokenNumber: newToken.tokenNumber, serviceType: newToken.serviceType })
         );
 
-        await refreshQueueStatus(newToken.serviceType, newToken.tokenNumber);
-        
-        // ✅ ALSO SAVE TO APPOINTMENT HISTORY IN BACKEND
-        await api.post('/appointments', {
-          tokenId: newToken.tokenNumber,
-          service: selectedService,
-          serviceType: serviceType,
-          branch: selectedBranch,
-          city: selectedCity,
-          date: selectedDate,
-          time: selectedTime
-        });
-        
-        toast.success(`🎫 Token ${newToken.tokenNumber} generated successfully!`, {
+        // Join socket rooms for the new token
+        socketService.joinQueue(newToken.serviceType, user?.id);
+        socketService.joinTokenRoom(newToken.tokenNumber);
+
+        await refreshQueueStatus(newToken.serviceType, newToken.tokenNumber, { updatePrimary: true });
+
+        // Save appointment history record
+        try {
+          await api.post('/appointments', {
+            tokenId: newToken.tokenNumber,
+            service: selectedService,
+            serviceType: serviceType,
+            branch: selectedBranch,
+            city: selectedCity,
+            date: selectedDate,
+            time: selectedTime
+          });
+        } catch {
+          // Non-fatal — token was generated, history record failed silently
+        }
+
+        toast.success(`🎫 Token ${newToken.tokenNumber} generated! Position #${newToken.position}`, {
           duration: 5000,
           icon: '🎫'
         });
-        
-        // Join WebSocket queue
-        if (user) {
-          socketService.joinQueue(serviceType, user.id);
-        }
       } else {
         toast.error(response.data.message || 'Failed to generate token');
       }
@@ -381,19 +399,13 @@ const EnhancedUserDashboard = () => {
   };
 
   const handleCancelAppointment = async () => {
-    if (!cancelReason) {
-      toast.error('Please provide a reason for cancellation');
-      return;
-    }
-    
     try {
       await api.put(`/tokens/${token.number}/cancel`, { reason: cancelReason });
-      
-      setToken(prev => ({ ...prev, status: 'cancelled' }));
       toast.success(`Appointment ${token.number} has been cancelled`, { icon: '❌' });
       setShowCancelModal(false);
       setCancelReason('');
       setToken(null);
+      setActiveTokens(prev => prev.filter(t => t.tokenNumber !== token.number));
     } catch (error) {
       toast.error('Failed to cancel appointment');
     }
@@ -404,18 +416,16 @@ const EnhancedUserDashboard = () => {
       toast.error('Please select new date and time');
       return;
     }
-    
+
     try {
       const response = await api.put(`/tokens/${token.number}/reschedule`, {
         newDate: rescheduleDate,
         newTime: rescheduleTime
       });
-      
+
       if (response.data.success) {
-        const newToken = response.data.data;
         setToken({
           ...token,
-          number: newToken.tokenNumber,
           date: rescheduleDate,
           time: rescheduleTime,
           timestamp: new Date().toISOString()
@@ -425,10 +435,28 @@ const EnhancedUserDashboard = () => {
     } catch (error) {
       toast.error('Failed to reschedule appointment');
     }
-    
+
     setShowRescheduleModal(false);
     setRescheduleDate('');
     setRescheduleTime('');
+  };
+
+  // Admin: simulate a customer arrival
+  const handleSimulateArrival = async (svcType) => {
+    setSimLoading(true);
+    try {
+      const response = await api.post(`/queue/${svcType}/simulate`, {
+        customerName: `Demo Customer ${Date.now() % 1000}`,
+        service: null
+      });
+      if (response.data.success) {
+        toast.success(`✅ Simulated arrival: ${response.data.data.tokenNumber}`, { icon: '🤖' });
+      }
+    } catch (error) {
+      toast.error('Simulation failed: ' + (error.response?.data?.message || error.message));
+    } finally {
+      setSimLoading(false);
+    }
   };
 
   const QRCodeModal = ({ token, onClose }) => {
@@ -446,17 +474,18 @@ const EnhancedUserDashboard = () => {
                   <div className="text-3xl mb-2">📱</div>
                   <div className="font-mono text-lg font-bold">{token.number}</div>
                   <div className="text-xs mt-2">{token.service}</div>
-                  <div className="text-xs">{token.branch}, {token.city}</div>
+                  <div className="text-xs">{token.branch}</div>
+                  {token.city && <div className="text-xs">{token.city}</div>}
                 </div>
               </div>
             </div>
             <div className="text-center">
               <p className="text-3xl font-bold text-blue-600">{token.number}</p>
               <p className="text-sm text-gray-600 mt-2">{token.service}</p>
-              <p className="text-xs text-gray-500">{token.branch}, {token.city}</p>
+              <p className="text-xs text-gray-500">{token.branch}{token.city ? `, ${token.city}` : ''}</p>
               <p className="text-xs text-gray-500">{token.date} at {token.time}</p>
             </div>
-            <button 
+            <button
               onClick={() => window.print()}
               className="bg-green-600 text-white px-4 py-2 rounded hover:bg-green-700 transition"
             >
@@ -473,7 +502,7 @@ const EnhancedUserDashboard = () => {
     const excelData = [{
       'Token Number': token.number, 'Service': token.service, 'City': token.city,
       'Branch': token.branch, 'Date': token.date, 'Time': token.time,
-      'People Ahead': queueStatus?.peopleAhead || token.peopleAhead,
+      'People Ahead': queueStatus?.peopleAhead ?? token.peopleAhead,
       'Estimated Wait': queueStatus?.estimatedWait || token.estimatedWait
     }];
     const worksheet = XLSX.utils.json_to_sheet(excelData);
@@ -492,20 +521,21 @@ const EnhancedUserDashboard = () => {
     doc.setFontSize(12);
     doc.text(`Token: ${token.number}`, 14, 40);
     doc.text(`Service: ${token.service}`, 14, 50);
-    doc.text(`Branch: ${token.branch}, ${token.city}`, 14, 60);
+    doc.text(`Branch: ${token.branch}${token.city ? ', ' + token.city : ''}`, 14, 60);
     doc.text(`Date: ${token.date} at ${token.time}`, 14, 70);
-    doc.text(`People Ahead: ${queueStatus?.peopleAhead || token.peopleAhead}`, 14, 80);
+    doc.text(`People Ahead: ${queueStatus?.peopleAhead ?? token.peopleAhead}`, 14, 80);
     doc.text(`Est. Wait: ${queueStatus?.estimatedWait || token.estimatedWait}`, 14, 90);
+    doc.text('(Estimates are approximate and may vary)', 14, 100);
     doc.save(`token-${token.number}.pdf`);
     toast.success('PDF downloaded!');
   };
 
-  const peopleAhead = queueStatus?.peopleAhead || token?.peopleAhead || 0;
+  const peopleAhead = queueStatus?.peopleAhead ?? token?.peopleAhead ?? 0;
   const position = peopleAhead + 1;
 
   return (
-    <div className="min-h-screen bg-gray-100 dark:bg-gray-900">
-      <div className="max-w-7xl mx-auto p-6">
+    <div className="bg-gray-50 dark:bg-gray-900/50">
+      <div className="max-w-7xl mx-auto p-4 md:p-6 md:py-8">
         {/* Welcome Banner */}
         <div className="bg-gradient-to-r from-blue-600 to-indigo-600 rounded-xl p-6 mb-6 text-white shadow-lg">
           <h1 className="text-3xl font-bold mb-2">Welcome to Smart Queue System</h1>
@@ -520,16 +550,16 @@ const EnhancedUserDashboard = () => {
               <span className={`text-xs px-2 py-1 rounded ${isConnected ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>
                 {isConnected ? '🟢 Live Connection' : '🔴 Connecting...'}
               </span>
-              <span className="text-xs bg-blue-100 text-blue-700 px-2 py-1 rounded">🔔 You'll be notified when turn is near</span>
+              <span className="text-xs bg-blue-100 text-blue-700 px-2 py-1 rounded">🔔 Turn notifications active</span>
             </div>
             <div className="flex gap-2">
-              <button 
+              <button
                 onClick={() => setShowRescheduleModal(true)}
                 className="bg-yellow-500 text-white px-3 py-1 rounded text-sm hover:bg-yellow-600 transition"
               >
                 📅 Reschedule
               </button>
-              <button 
+              <button
                 onClick={() => setShowCancelModal(true)}
                 className="bg-red-500 text-white px-3 py-1 rounded text-sm hover:bg-red-600 transition"
               >
@@ -539,32 +569,17 @@ const EnhancedUserDashboard = () => {
           </div>
         )}
 
-        {/* Admin Cards - ONLY for ADMIN users */}
         {isAdmin && (
-          <div className="mb-8">
-            <h3 className="text-lg font-semibold mb-3 dark:text-white">Quick Access to Admin Panels</h3>
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-              <Link to="/admin/bank" className="bg-gradient-to-r from-green-600 to-green-700 text-white p-4 rounded-xl text-center hover:shadow-lg transition transform hover:scale-105">
-                <div className="text-3xl mb-2">🏦</div>
-                <div className="font-semibold">Bank Admin</div>
-                <div className="text-xs opacity-90">Manage queue</div>
-              </Link>
-              <Link to="/admin/nadra" className="bg-gradient-to-r from-purple-600 to-purple-700 text-white p-4 rounded-xl text-center hover:shadow-lg transition transform hover:scale-105">
-                <div className="text-3xl mb-2">🪪</div>
-                <div className="font-semibold">NADRA Admin</div>
-                <div className="text-xs opacity-90">Manage queue</div>
-              </Link>
-              <Link to="/admin/university" className="bg-gradient-to-r from-orange-600 to-orange-700 text-white p-4 rounded-xl text-center hover:shadow-lg transition transform hover:scale-105">
-                <div className="text-3xl mb-2">🎓</div>
-                <div className="font-semibold">University Admin</div>
-                <div className="text-xs opacity-90">Manage queue</div>
-              </Link>
-              <Link to="/admin/hospital" className="bg-gradient-to-r from-red-600 to-red-700 text-white p-4 rounded-xl text-center hover:shadow-lg transition transform hover:scale-105">
-                <div className="text-3xl mb-2">🏥</div>
-                <div className="font-semibold">Hospital Admin</div>
-                <div className="text-xs opacity-90">Manage queue</div>
-              </Link>
-            </div>
+          <div className="mb-8 rounded-xl border border-blue-100 dark:border-blue-900 bg-blue-50/80 dark:bg-blue-950/30 p-4 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+            <p className="text-sm text-blue-900 dark:text-blue-200">
+              You are signed in as admin. Use the sidebar for Dashboard, service queues, analytics, and staff tools.
+            </p>
+            <Link
+              to="/admin/dashboard"
+              className="shrink-0 inline-flex justify-center bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium px-4 py-2 rounded-lg transition"
+            >
+              Open Admin Dashboard
+            </Link>
           </div>
         )}
 
@@ -574,14 +589,14 @@ const EnhancedUserDashboard = () => {
             <h2 className="text-2xl font-bold mb-6 dark:text-white flex items-center gap-2">
               <span>📝</span> Book New Appointment
             </h2>
-            
+
             <div className="space-y-5">
               <div>
                 <label className="block text-sm font-medium mb-2 dark:text-gray-300 flex items-center gap-2">
                   <span>🛎️</span> Select Service
                 </label>
-                <select className="w-full border rounded-lg p-3 dark:bg-gray-700 dark:border-gray-600 dark:text-white focus:ring-2 focus:ring-blue-500" 
-                  value={selectedService} 
+                <select className="w-full border rounded-lg p-3 dark:bg-gray-700 dark:border-gray-600 dark:text-white focus:ring-2 focus:ring-blue-500"
+                  value={selectedService}
                   onChange={(e) => { setSelectedService(e.target.value); setSelectedCity(''); setSelectedBranch(''); }}>
                   <option value="">Choose a service</option>
                   <optgroup label="🏦 Bank">{services.bank.map(s => <option key={s}>{s}</option>)}</optgroup>
@@ -590,14 +605,14 @@ const EnhancedUserDashboard = () => {
                   <optgroup label="🏥 Hospital">{services.hospital.map(s => <option key={s}>{s}</option>)}</optgroup>
                 </select>
               </div>
-              
+
               {selectedService && (
                 <div>
                   <label className="block text-sm font-medium mb-2 dark:text-gray-300 flex items-center gap-2">
                     <span>📍</span> Select City
                   </label>
-                  <select className="w-full border rounded-lg p-3 dark:bg-gray-700 dark:border-gray-600 dark:text-white focus:ring-2 focus:ring-blue-500" 
-                    value={selectedCity} 
+                  <select className="w-full border rounded-lg p-3 dark:bg-gray-700 dark:border-gray-600 dark:text-white focus:ring-2 focus:ring-blue-500"
+                    value={selectedCity}
                     onChange={(e) => { setSelectedCity(e.target.value); setSelectedBranch(''); }}>
                     <option value="">Choose city</option>
                     <option>Karachi</option><option>Lahore</option><option>Islamabad</option>
@@ -605,35 +620,35 @@ const EnhancedUserDashboard = () => {
                   </select>
                 </div>
               )}
-              
+
               {selectedService && selectedCity && (
                 <div>
                   <label className="block text-sm font-medium mb-2 dark:text-gray-300 flex items-center gap-2">
                     <span>🏢</span> Select {serviceType === 'bank' ? 'Branch' : serviceType === 'nadra' ? 'NADRA Office' : serviceType === 'university' ? 'Campus' : 'Hospital'}
                   </label>
-                  <select className="w-full border rounded-lg p-3 dark:bg-gray-700 dark:border-gray-600 dark:text-white focus:ring-2 focus:ring-blue-500" 
-                    value={selectedBranch} 
+                  <select className="w-full border rounded-lg p-3 dark:bg-gray-700 dark:border-gray-600 dark:text-white focus:ring-2 focus:ring-blue-500"
+                    value={selectedBranch}
                     onChange={(e) => setSelectedBranch(e.target.value)}>
                     <option value="">Choose in {selectedCity}</option>
                     {getBranchesByServiceAndCity(serviceType, selectedCity).map(b => <option key={b}>{b}</option>)}
                   </select>
                 </div>
               )}
-              
+
               <div>
                 <label className="block text-sm font-medium mb-2 dark:text-gray-300 flex items-center gap-2">
                   <span>📅</span> Select Date
                 </label>
-                <input type="date" className="w-full border rounded-lg p-3 dark:bg-gray-700 dark:border-gray-600 dark:text-white focus:ring-2 focus:ring-blue-500" 
-                  value={selectedDate} onChange={(e) => setSelectedDate(e.target.value)} 
+                <input type="date" className="w-full border rounded-lg p-3 dark:bg-gray-700 dark:border-gray-600 dark:text-white focus:ring-2 focus:ring-blue-500"
+                  value={selectedDate} onChange={(e) => setSelectedDate(e.target.value)}
                   min={new Date().toISOString().split('T')[0]} />
               </div>
-              
+
               <div>
                 <label className="block text-sm font-medium mb-2 dark:text-gray-300 flex items-center gap-2">
                   <span>⏰</span> Select Time
                 </label>
-                <select className="w-full border rounded-lg p-3 dark:bg-gray-700 dark:border-gray-600 dark:text-white focus:ring-2 focus:ring-blue-500" 
+                <select className="w-full border rounded-lg p-3 dark:bg-gray-700 dark:border-gray-600 dark:text-white focus:ring-2 focus:ring-blue-500"
                   value={selectedTime} onChange={(e) => setSelectedTime(e.target.value)}>
                   <option value="">Choose time</option>
                   {['09:00 AM', '10:00 AM', '11:00 AM', '12:00 PM', '01:00 PM', '02:00 PM', '03:00 PM', '04:00 PM'].map(time => (
@@ -643,9 +658,9 @@ const EnhancedUserDashboard = () => {
                   ))}
                 </select>
               </div>
-              
-              <button 
-                onClick={handleBookAppointment} 
+
+              <button
+                onClick={handleBookAppointment}
                 disabled={isLoading}
                 className="w-full bg-gradient-to-r from-blue-600 to-blue-700 text-white py-3 rounded-lg hover:from-blue-700 hover:to-blue-800 transition font-semibold text-lg shadow-md disabled:opacity-50"
               >
@@ -677,7 +692,7 @@ const EnhancedUserDashboard = () => {
                   <button onClick={exportToPDF} className="bg-red-600 text-white px-3 py-2 rounded-lg text-sm hover:bg-red-700 transition">📄 PDF</button>
                 </div>
               </div>
-              
+
               {/* Hero Token Card */}
               <div className="bg-gradient-to-r from-blue-50 to-indigo-50 dark:from-blue-900/30 dark:to-indigo-900/30 rounded-xl p-6 text-center border-2 border-blue-200 dark:border-blue-700 shadow-lg">
                 <div className="text-sm text-blue-600 dark:text-blue-400 mb-2">Your Token Number</div>
@@ -695,7 +710,7 @@ const EnhancedUserDashboard = () => {
                   </div>
                   <div className="bg-white dark:bg-gray-800 rounded-lg p-2">
                     <p className="text-gray-500 text-xs">Location</p>
-                    <p className="font-semibold text-sm">{token.branch}, {token.city}</p>
+                    <p className="font-semibold text-sm">{token.branch}{token.city ? `, ${token.city}` : ''}</p>
                   </div>
                   <div className="bg-white dark:bg-gray-800 rounded-lg p-2">
                     <p className="text-gray-500 text-xs">Date & Time</p>
@@ -708,7 +723,7 @@ const EnhancedUserDashboard = () => {
                 </div>
               </div>
 
-              {/* If user has multiple active tokens, show them all */}
+              {/* Multiple active tokens */}
               {activeTokens.length > 1 && (
                 <div className="mt-6 bg-white dark:bg-gray-800 rounded-xl shadow-lg p-5 border border-gray-200 dark:border-gray-700">
                   <h3 className="text-lg font-bold mb-4 dark:text-white">Active Tokens (Live)</h3>
@@ -717,17 +732,13 @@ const EnhancedUserDashboard = () => {
                       .filter((t) => t.status === 'waiting' || t.status === 'serving')
                       .map((t) => {
                         const status = tokenStatuses[t.tokenNumber];
-                        const peopleAheadForToken =
-                          status?.nowServing && status.nowServing === t.tokenNumber ? 0 : status?.peopleAhead;
+                        const pAhead = status?.nowServing === t.tokenNumber ? 0 : status?.peopleAhead;
                         return (
-                          <div
-                            key={t.tokenNumber}
-                            className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 bg-gray-50 dark:bg-gray-700/30 rounded-lg p-4"
-                          >
+                          <div key={t.tokenNumber} className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 bg-gray-50 dark:bg-gray-700/30 rounded-lg p-4">
                             <div>
                               <div className="font-mono text-xl font-bold dark:text-white">{t.tokenNumber}</div>
                               <div className="text-sm text-gray-600 dark:text-gray-300">
-                                {t.service} • {t.serviceType} • {t.branch} • {new Date(t.date).toISOString().slice(0, 10)} {t.time}
+                                {t.service} • {t.serviceType} • {t.branch}
                               </div>
                             </div>
                             <div className="flex gap-4">
@@ -737,9 +748,7 @@ const EnhancedUserDashboard = () => {
                               </div>
                               <div className="text-right">
                                 <div className="text-xs text-gray-500 dark:text-gray-400">People Ahead</div>
-                                <div className="font-semibold dark:text-white">
-                                  {peopleAheadForToken ?? '—'}
-                                </div>
+                                <div className="font-semibold dark:text-white">{pAhead ?? '—'}</div>
                               </div>
                             </div>
                           </div>
@@ -748,7 +757,7 @@ const EnhancedUserDashboard = () => {
                   </div>
                 </div>
               )}
-               
+
               {/* Live Queue Status */}
               <div className="mt-6 space-y-4">
                 <div className="bg-orange-50 dark:bg-orange-900/20 rounded-lg p-4">
@@ -760,12 +769,12 @@ const EnhancedUserDashboard = () => {
                     <div className="bg-orange-500 h-3 rounded-full transition-all duration-500" style={{ width: `${Math.min(100, (peopleAhead / 20) * 100)}%` }}></div>
                   </div>
                   <p className="text-xs text-gray-500 mt-2">
-                    {peopleAhead === 0 ? "🎉 You're next! Please be ready." : 
-                     peopleAhead <= 3 ? "⚠️ Your turn is almost here!" : 
-                     `Approximately ${peopleAhead * 3} minutes wait`}
+                    {peopleAhead === 0 ? "🎉 You're next! Please be ready." :
+                     peopleAhead <= 3 ? "⚠️ Your turn is almost here!" :
+                     `${queueStatus?.estimatedWait || token.estimatedWait} (approximate)`}
                   </p>
                 </div>
-                
+
                 <div className="bg-green-50 dark:bg-green-900/20 rounded-lg p-4">
                   <div className="flex items-center gap-3">
                     <div className="w-3 h-3 bg-green-500 rounded-full animate-pulse"></div>
@@ -778,8 +787,14 @@ const EnhancedUserDashboard = () => {
                     <div className="ml-auto text-right">
                       <p className="text-sm text-gray-600 dark:text-gray-400">⏱️ Est. Wait</p>
                       <p className="text-lg font-semibold">{queueStatus?.estimatedWait || token.estimatedWait}</p>
+                      <p className="text-xs text-gray-400">(approximate)</p>
                     </div>
                   </div>
+                  {queueStatus?.openCounters !== undefined && (
+                    <p className="text-xs text-blue-600 dark:text-blue-400 mt-2">
+                      🏢 {queueStatus.openCounters} counter{queueStatus.openCounters !== 1 ? 's' : ''} open
+                    </p>
+                  )}
                 </div>
 
                 {queueStatus?.isTurnNear && (
@@ -802,8 +817,8 @@ const EnhancedUserDashboard = () => {
           <div className="bg-white dark:bg-gray-800 rounded-xl max-w-md w-full p-6">
             <h2 className="text-xl font-bold mb-4 dark:text-white">Cancel Appointment</h2>
             <p className="text-gray-600 dark:text-gray-400 mb-4">Are you sure you want to cancel token <span className="font-bold">{token?.number}</span>?</p>
-            <textarea 
-              className="w-full border rounded-lg p-3 mb-4 dark:bg-gray-700 focus:ring-2 focus:ring-red-500" 
+            <textarea
+              className="w-full border rounded-lg p-3 mb-4 dark:bg-gray-700 focus:ring-2 focus:ring-red-500"
               rows="3"
               placeholder="Reason for cancellation (optional)"
               value={cancelReason}
@@ -823,14 +838,14 @@ const EnhancedUserDashboard = () => {
           <div className="bg-white dark:bg-gray-800 rounded-xl max-w-md w-full p-6">
             <h2 className="text-xl font-bold mb-4 dark:text-white">Reschedule Appointment</h2>
             <p className="text-gray-600 dark:text-gray-400 mb-4">Select new date and time for token <span className="font-bold">{token?.number}</span></p>
-            <input 
-              type="date" 
-              className="w-full border rounded-lg p-3 mb-3 dark:bg-gray-700 focus:ring-2 focus:ring-yellow-500" 
+            <input
+              type="date"
+              className="w-full border rounded-lg p-3 mb-3 dark:bg-gray-700 focus:ring-2 focus:ring-yellow-500"
               value={rescheduleDate}
               onChange={(e) => setRescheduleDate(e.target.value)}
               min={new Date().toISOString().split('T')[0]}
             />
-            <select 
+            <select
               className="w-full border rounded-lg p-3 mb-4 dark:bg-gray-700 focus:ring-2 focus:ring-yellow-500"
               value={rescheduleTime}
               onChange={(e) => setRescheduleTime(e.target.value)}

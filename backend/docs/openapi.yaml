@@ -1,0 +1,351 @@
+openapi: 3.0.0
+info:
+  title: Smart Queue Management System API
+  version: 2.0.0
+  description: SQMS hackathon MVP — auth, tokens, queue management, appointments
+tags:
+  - name: Auth
+  - name: Tokens
+  - name: Queue
+  - name: Appointments
+paths:
+  /auth/register:
+    post:
+      tags: [Auth]
+      summary: Register a new user
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, email, password]
+              properties:
+                name: { type: string }
+                email: { type: string, format: email }
+                password: { type: string }
+                phone: { type: string }
+      responses:
+        '201':
+          description: User created
+        '400':
+          description: Validation error or duplicate email
+  /auth/login:
+    post:
+      tags: [Auth]
+      summary: Login
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, password]
+              properties:
+                email: { type: string }
+                password: { type: string }
+      responses:
+        '200':
+          description: Returns accessToken and refreshToken in data
+        '401':
+          description: Invalid credentials
+  /auth/me:
+    get:
+      tags: [Auth]
+      summary: Current user profile
+      responses:
+        '200':
+          description: User object
+        '401':
+          description: Unauthorized
+  /auth/refresh-token:
+    post:
+      tags: [Auth]
+      summary: Refresh access token
+      security: []
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                refreshToken: { type: string }
+      responses:
+        '200':
+          description: New accessToken
+  /auth/logout:
+    post:
+      tags: [Auth]
+      summary: Logout (invalidate refresh token)
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                refreshToken: { type: string }
+      responses:
+        '200':
+          description: Logged out
+  /tokens:
+    post:
+      tags: [Tokens]
+      summary: Generate a digital token (authenticated customer)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [service, serviceType, branch, date, time]
+              properties:
+                service: { type: string }
+                serviceType:
+                  type: string
+                  enum: [bank, nadra, university, hospital]
+                branch: { type: string }
+                date: { type: string, format: date }
+                time: { type: string }
+      responses:
+        '201':
+          description: Token created
+        '400':
+          description: Missing fields
+  /tokens/my-tokens:
+    get:
+      tags: [Tokens]
+      summary: List tokens for the logged-in user
+      responses:
+        '200':
+          description: Array of tokens
+  /tokens/queue/{serviceType}:
+    get:
+      tags: [Tokens]
+      summary: Public queue status for a service type
+      security: []
+      parameters:
+        - in: path
+          name: serviceType
+          required: true
+          schema:
+            type: string
+            enum: [bank, nadra, university, hospital]
+      responses:
+        '200':
+          description: Waiting list and counters
+  /tokens/{tokenNumber}/cancel:
+    put:
+      tags: [Tokens]
+      summary: Cancel own token
+      parameters:
+        - in: path
+          name: tokenNumber
+          required: true
+          schema: { type: string }
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                reason: { type: string }
+      responses:
+        '200':
+          description: Cancelled
+  /tokens/{tokenNumber}/reschedule:
+    put:
+      tags: [Tokens]
+      summary: Reschedule own token
+      parameters:
+        - in: path
+          name: tokenNumber
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Updated token
+  /queue/{serviceType}:
+    get:
+      tags: [Queue]
+      summary: Staff queue view (waiting + serving)
+      parameters:
+        - in: path
+          name: serviceType
+          required: true
+          schema:
+            type: string
+            enum: [bank, nadra, university, hospital]
+        - in: query
+          name: branch
+          schema: { type: string }
+      responses:
+        '200':
+          description: Tokens and stats
+  /queue/{serviceType}/analytics:
+    get:
+      tags: [Queue]
+      summary: Queue analytics for today
+      parameters:
+        - in: path
+          name: serviceType
+          required: true
+          schema:
+            type: string
+            enum: [bank, nadra, university, hospital]
+      responses:
+        '200':
+          description: Analytics payload
+  /queue/{serviceType}/next:
+    put:
+      tags: [Queue]
+      summary: Call next waiting token
+      parameters:
+        - in: path
+          name: serviceType
+          required: true
+          schema:
+            type: string
+            enum: [bank, nadra, university, hospital]
+      responses:
+        '200':
+          description: Token now serving
+        '404':
+          description: No tokens waiting
+  /queue/{serviceType}/complete/{tokenId}:
+    put:
+      tags: [Queue]
+      summary: Mark token completed
+      parameters:
+        - in: path
+          name: serviceType
+          required: true
+          schema: { type: string }
+        - in: path
+          name: tokenId
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Completed
+  /queue/{serviceType}/skip/{tokenId}:
+    put:
+      tags: [Queue]
+      summary: Skip token
+      parameters:
+        - in: path
+          name: serviceType
+          required: true
+          schema: { type: string }
+        - in: path
+          name: tokenId
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Skipped
+  /queue/{serviceType}/counter:
+    put:
+      tags: [Queue]
+      summary: Open, close, or set counter count
+      parameters:
+        - in: path
+          name: serviceType
+          required: true
+          schema: { type: string }
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [action]
+              properties:
+                action:
+                  type: string
+                  enum: [open, close, set]
+                count: { type: integer }
+      responses:
+        '200':
+          description: New openCounters value
+  /queue/{serviceType}/simulate:
+    post:
+      tags: [Queue]
+      summary: Add one simulated arrival (demo)
+      parameters:
+        - in: path
+          name: serviceType
+          required: true
+          schema: { type: string }
+      responses:
+        '201':
+          description: Simulated token
+  /queue/{serviceType}/simulation:
+    get:
+      tags: [Queue]
+      summary: Simulation status
+      parameters:
+        - in: path
+          name: serviceType
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: running, intervalMs
+  /queue/{serviceType}/simulation/start:
+    post:
+      tags: [Queue]
+      summary: Start auto-arrival simulation
+      parameters:
+        - in: path
+          name: serviceType
+          required: true
+          schema: { type: string }
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                intervalMs: { type: integer }
+      responses:
+        '200':
+          description: Started
+  /queue/{serviceType}/simulation/stop:
+    post:
+      tags: [Queue]
+      summary: Stop simulation loop
+      parameters:
+        - in: path
+          name: serviceType
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Stopped
+  /queue/{serviceType}/simulation/reset:
+    post:
+      tags: [Queue]
+      summary: Remove simulated waiting tokens
+      parameters:
+        - in: path
+          name: serviceType
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Count removed
+  /appointments:
+    post:
+      tags: [Appointments]
+      summary: Create appointment record
+      responses:
+        '201':
+          description: Created
+  /appointments/my-appointments:
+    get:
+      tags: [Appointments]
+      summary: User appointments
+      responses:
+        '200':
+          description: List
